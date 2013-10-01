@@ -21,6 +21,30 @@
 #define I2C_READ    1
 #define I2C_WRITE   0
 
+
+#define BAUD 9600UL
+#define UBRR_VAL ((F_CPU+BAUD*8)/(BAUD*16)-1)
+
+
+int uart_putc(unsigned char c)
+{
+    while (!(UCSRA & (1<<UDRE)))
+    {
+    }
+
+    UDR = c;
+    return 0;
+}
+
+void uart_puts (char *s)
+{
+    while (*s)
+    {
+        uart_putc(*s);
+        s++;
+    }
+}
+
 /*************************************************************************
  Initialization of the I2C bus interface. Need to be called only once
 *************************************************************************/
@@ -214,12 +238,17 @@ class Motor
 public:
   Motor()
   {
+    uart_puts("Init Motor...\r\n");
+	uart_putc('1');
     i2c_init();                             // initialize I2C library
 
+	uart_putc('2');
     Send (e_Speed, 0);
+	uart_putc('3');
     Send (e_Turn, 0);
     Send (e_Acceleration, 10);
     Send (e_Mode, 3);
+	uart_puts("...ok\r\n");
   }
 
   void Send (TMotorCmd cmd, unsigned char value)
@@ -253,6 +282,8 @@ public:
     , m_iTurnSpeed (0)
     , m_iTurnCount (0)
   {
+	  PORTB |= 0x1;
+	  PORTC |= 0x15;
   }
 
   void run()
@@ -261,11 +292,11 @@ public:
     {
 
       //TODO:  Werte auslesen
-      bool bContactLeft = PINB & 1;
-      bool bContactRight = PINB & 2;
-      bool bDistanceLeft = PINB & 4;
-      bool bDistanceRight = PINB & 8;
-      bool bStartKey = PINB & 16;
+      bool bContactLeft = false;//((PINC & 1) == 0);
+      bool bContactRight = false;//((PINC & 2) == 0);
+      bool bDistanceLeft = false;//((PINC & 4) == 0);
+      bool bDistanceRight = false;//((PINC & 8) == 0);
+      bool bStartKey = ((PINB & 1) == 0);
 
       signed char iFeedbackSpeed = m_Motor.Read(e_Speed);
 
@@ -313,11 +344,55 @@ public:
           m_SensorState = e_ContactRight;
           bTransition = true;
         }
+        else if (bDistanceRight)
+        {
+        }
+        else if (bDistanceLeft)
+        {
+        }
+        else
+        {
+          m_SensorState = e_Normal;
+          bTransition = true;
+        }
         break;
 
       case e_ContactLeft:
       case e_ContactRight:
+          if (bContactLeft)
+          {
+          }
+          else if (bContactRight)
+          {
+          }
+          else
+          {
+            m_SensorState = e_Normal;
+            bTransition = true;
+          }
         break;
+      }
+
+      if (bTransition)
+      {
+          switch(m_SensorState)
+          {
+          case e_ContactLeft:
+        	  uart_puts("ContactLeft\r\n");
+        	  break;
+          case e_ContactRight:
+        	  uart_puts("ContactRight\r\n");
+        	  break;
+          case e_DistanceLeft:
+        	  uart_puts("DistanceLeft\r\n");
+        	  break;
+          case e_DistanceRight:
+        	  uart_puts("DistanceRight\r\n");
+        	  break;
+          case e_Normal:
+        	  uart_puts("Normal\r\n");
+        	  break;
+          }
       }
 
 
@@ -572,6 +647,40 @@ private:
 
 int main()
 {
-  Mower mower;
-  mower.run();
+
+	  UBRRH = UBRR_VAL >> 8;
+	  UBRRL = UBRR_VAL & 0xFF;
+
+	  UCSRB |= (1<<TXEN);
+	  UCSRC = (1<<URSEL)|(1<<UCSZ1)|(1<<UCSZ0);
+
+	    uart_puts("Boot...\r\n");
+
+	      Mower mower;
+	      mower.run();
+//	  Motor m;
+//
+//		for(int i = 0; i < 100; i++)
+//		{
+//			m.Send (e_Speed, i);
+//			_delay_ms(20);
+//		}
+//	  for(;;)
+//	  {
+//			m.Send (e_Speed, 100);
+//			_delay_ms(20);
+//			continue;
+//			for(int i = -100; i < 100; i++)
+//			{
+//				m.Send (e_Speed, i);
+//				_delay_ms(20);
+//			}
+//			_delay_ms(1000);
+//			for(int i = 100; i > -100; i--)
+//			{
+//				m.Send (e_Speed, i);
+//				_delay_ms(20);
+//			}
+//			_delay_ms(1000);
+//	  }
 }
