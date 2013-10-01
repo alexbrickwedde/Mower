@@ -486,7 +486,7 @@ public:
           if (m_iForwardSpeed != 100)
           {
             m_iForwardSpeed += (m_iForwardSpeed < 100) ? 1 : -1;
-            uart_puts("ForwardSpeed -> corrected\r\n");
+            //uart_puts("ForwardSpeed -> corrected\r\n");
           }
           m_iTurnSpeed = 0;
         }
