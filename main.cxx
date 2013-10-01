@@ -1,8 +1,37 @@
 #include <util/delay.h>
 
-#include<avr/io.h>
-#include<util/delay.h>
-#include<inttypes.h>
+#include <avr/io.h>
+#include <util/delay.h>
+#include <inttypes.h>
+
+#define BAUD 115200UL
+#define UBRR_VAL ((F_CPU+BAUD*8)/(BAUD*16)-1)
+
+void uart_init()
+{
+  UBRRH = UBRR_VAL >> 8;
+  UBRRL = UBRR_VAL & 0xFF;
+
+  UCSRB |= (1<<TXEN);
+  UCSRC = (1<<URSEL)|(1<<UCSZ1)|(1<<UCSZ0);
+}
+
+void uart_putc(unsigned char c)
+{
+  while (!(UCSRA & (1<<UDRE)))
+  {
+  }
+  UDR = c;
+}
+
+void uart_puts (const char *s)
+{
+  while (*s)
+  {
+    uart_putc(*s);
+    s++;
+  }
+}
 
 /*************************************************************************
 * Title:    I2C master library using hardware TWI interface
@@ -21,30 +50,6 @@
 #define I2C_READ    1
 #define I2C_WRITE   0
 
-
-#define BAUD 9600UL
-#define UBRR_VAL ((F_CPU+BAUD*8)/(BAUD*16)-1)
-
-
-int uart_putc(unsigned char c)
-{
-    while (!(UCSRA & (1<<UDRE)))
-    {
-    }
-
-    UDR = c;
-    return 0;
-}
-
-void uart_puts (char *s)
-{
-    while (*s)
-    {
-        uart_putc(*s);
-        s++;
-    }
-}
-
 /*************************************************************************
  Initialization of the I2C bus interface. Need to be called only once
 *************************************************************************/
@@ -52,7 +57,6 @@ void i2c_init(void)
 {
   TWSR = 0;                         /* no prescaler */
   TWBR = ((F_CPU/SCL_CLOCK)-16)/2;  /* must be > 10 for stable operation */
-
 }/* i2c_init */
 
 /*************************************************************************
@@ -97,43 +101,41 @@ unsigned char i2c_start(unsigned char address)
 *************************************************************************/
 void i2c_start_wait(unsigned char address)
 {
-    uint8_t   twst;
+  uint8_t   twst;
+  while ( 1 )
+  {
+    // send START condition
+    TWCR = (1<<TWINT) | (1<<TWSTA) | (1<<TWEN);
 
+    // wait until transmission completed
+    while(!(TWCR & (1<<TWINT)));
 
-    while ( 1 )
+    // check value of TWI Status Register. Mask prescaler bits.
+    twst = TW_STATUS & 0xF8;
+    if ( (twst != TW_START) && (twst != TW_REP_START)) continue;
+
+    // send device address
+    TWDR = address;
+    TWCR = (1<<TWINT) | (1<<TWEN);
+
+    // wail until transmission completed
+    while(!(TWCR & (1<<TWINT)));
+
+    // check value of TWI Status Register. Mask prescaler bits.
+    twst = TW_STATUS & 0xF8;
+    if ( (twst == TW_MT_SLA_NACK )||(twst ==TW_MR_DATA_NACK) )
     {
-      // send START condition
-      TWCR = (1<<TWINT) | (1<<TWSTA) | (1<<TWEN);
+        /* device busy, send stop condition to terminate write operation */
+        TWCR = (1<<TWINT) | (1<<TWEN) | (1<<TWSTO);
 
-      // wait until transmission completed
-      while(!(TWCR & (1<<TWINT)));
+        // wait until stop condition is executed and bus released
+        while(TWCR & (1<<TWSTO));
 
-      // check value of TWI Status Register. Mask prescaler bits.
-      twst = TW_STATUS & 0xF8;
-      if ( (twst != TW_START) && (twst != TW_REP_START)) continue;
-
-      // send device address
-      TWDR = address;
-      TWCR = (1<<TWINT) | (1<<TWEN);
-
-      // wail until transmission completed
-      while(!(TWCR & (1<<TWINT)));
-
-      // check value of TWI Status Register. Mask prescaler bits.
-      twst = TW_STATUS & 0xF8;
-      if ( (twst == TW_MT_SLA_NACK )||(twst ==TW_MR_DATA_NACK) )
-      {
-          /* device busy, send stop condition to terminate write operation */
-          TWCR = (1<<TWINT) | (1<<TWEN) | (1<<TWSTO);
-
-          // wait until stop condition is executed and bus released
-          while(TWCR & (1<<TWSTO));
-
-          continue;
-      }
-      //if( twst != TW_MT_SLA_ACK) return 1;
-      break;
-     }
+        continue;
+    }
+    //if( twst != TW_MT_SLA_ACK) return 1;
+    break;
+   }
 
 }/* i2c_start_wait */
 
@@ -148,7 +150,7 @@ void i2c_start_wait(unsigned char address)
 *************************************************************************/
 unsigned char i2c_rep_start(unsigned char address)
 {
-    return i2c_start( address );
+  return i2c_start( address );
 
 }/* i2c_rep_start */
 
@@ -239,33 +241,32 @@ public:
   Motor()
   {
     uart_puts("Init Motor...\r\n");
-	uart_putc('1');
+    uart_putc('1');
     i2c_init();                             // initialize I2C library
 
-	uart_putc('2');
+    uart_putc('2');
     Send (e_Speed, 0);
-	uart_putc('3');
+    uart_putc('3');
     Send (e_Turn, 0);
     Send (e_Acceleration, 10);
     Send (e_Mode, 3);
-	uart_puts("...ok\r\n");
+    uart_puts("...ok\r\n");
   }
 
   void Send (TMotorCmd cmd, unsigned char value)
   {
-    i2c_start_wait(0xB0+I2C_WRITE);     // set device address and write mode
-    i2c_write(cmd);                        // write address = 5
-    i2c_write(value);                        // write value 0x75 to EEPROM
-    i2c_stop();                             // set stop conditon = release bus
+    i2c_start_wait(0xB0+I2C_WRITE);
+    i2c_write(cmd);
+    i2c_write(value);
+    i2c_stop();
   };
 
   uint8_t Read (TMotorCmd cmd)
   {
-    // read previously written value back from EEPROM address 5
-    i2c_start_wait(0xB0+I2C_WRITE);     // set device address and write mode
-    i2c_write(cmd);                        // write address = 5
-    i2c_rep_start(0xB0+I2C_READ);       // set device address and read mode
-    uint8_t iRet = i2c_readNak();                    // read one byte from EEPROM
+    i2c_start_wait(0xB0+I2C_WRITE);
+    i2c_write(cmd);
+    i2c_rep_start(0xB0+I2C_READ);
+    uint8_t iRet = i2c_readNak();
     i2c_stop();
     return iRet;
   };
@@ -282,15 +283,16 @@ public:
     , m_iTurnSpeed (0)
     , m_iTurnCount (0)
   {
+    uart_puts("Init Mower...\r\n");
 	  PORTB |= 0x1;
 	  PORTC |= 0x15;
+    uart_puts("...ok\r\n");
   }
 
   void run()
   {
     for (;;)
     {
-
       //TODO:  Werte auslesen
       bool bContactLeft = false;//((PINC & 1) == 0);
       bool bContactRight = false;//((PINC & 2) == 0);
@@ -406,7 +408,6 @@ public:
         }
       }
 
-
       switch (m_MovingState)
       {
       case e_Idle:
@@ -415,16 +416,19 @@ public:
           switch (m_SensorState)
           {
           case e_Normal:
+            uart_puts("StartKey -> MovingFast\r\n");
             m_MovingState = e_MovingFast;
             break;
 
           case e_DistanceLeft:
           case e_DistanceRight:
+            uart_puts("StartKey -> MovingSlow\r\n");
             m_MovingState = e_MovingSlow;
             break;
 
           case e_ContactLeft:
           case e_ContactRight:
+            uart_puts("StartKey -> BackForTurn\r\n");
             m_MovingState = e_BackForTurn;
             break;
           }
@@ -442,22 +446,25 @@ public:
           switch (m_SensorState)
           {
           case e_Normal:
-            //TODO: fehler!
+            uart_puts("ERROR: State:MovingFast, Sensor:Normal\r\n");
             break;
 
           case e_DistanceLeft:
           case e_DistanceRight:
+            uart_puts("Distance -> MovingFast > MovingSlow\r\n");
             m_MovingState = e_MovingSlow;
             m_iForwardSpeed = 20;
             m_iTurnSpeed = 0;
             continue;
 
           case e_ContactLeft:
+            uart_puts("ContactLeft -> MovingFast > MovingSlow\r\n");
             m_AfterBackwardsMovingState = e_TurnRight;
             m_MovingState = e_BackForTurn;
             continue;
 
           case e_ContactRight:
+            uart_puts("ContactRight -> MovingFast > MovingSlow\r\n");
             m_AfterBackwardsMovingState = e_TurnLeft;
             m_MovingState = e_BackForTurn;
             continue;
@@ -470,6 +477,7 @@ public:
             int iActualMax = m_iForwardSpeed + 10;
             if (iFeedbackSpeed > iActualMax)
             {
+              uart_puts("SpeedTooLow -> Idle\r\n");
               m_MovingState = e_Idle;
               continue;
             }
@@ -478,6 +486,7 @@ public:
           if (m_iForwardSpeed != 100)
           {
             m_iForwardSpeed += (m_iForwardSpeed < 100) ? 1 : -1;
+            uart_puts("ForwardSpeed -> corrected\r\n");
           }
           m_iTurnSpeed = 0;
         }
@@ -489,16 +498,17 @@ public:
           switch (m_SensorState)
           {
           case e_Normal:
+            uart_puts("SensorNormal -> MovingSlow > MovingFast\r\n");
             m_MovingState = e_MovingFast;
             break;
 
           case e_DistanceLeft:
           case e_DistanceRight:
-            //TODO: fehler!
             break;
 
           case e_ContactLeft:
           case e_ContactRight:
+            uart_puts("Contact -> MovingSlow > BackForTurn\r\n");
             m_MovingState = e_BackForTurn;
             m_iTurnCount = 20;
             m_iForwardSpeed = -20;
@@ -510,7 +520,7 @@ public:
         {
           if (m_iForwardSpeed != 20)
           {
-            //TODO: fehler!
+            uart_puts("ERROR: MovingSlow & ForwardSpeed!=20\r\n");
           }
         }
         break;
@@ -521,6 +531,7 @@ public:
           switch (m_SensorState)
           {
           case e_Normal:
+            uart_puts("SensorNormal -> BackForTurn > Turning\r\n");
             m_MovingState = m_AfterBackwardsMovingState;
             m_iForwardSpeed = 0;
             m_iTurnSpeed = 0;
@@ -537,7 +548,7 @@ public:
         {
           if (m_iForwardSpeed != -20)
           {
-            //TODO: fehler!
+            uart_puts("ERROR: BackForTurn & ForwardSpeed!=-20\r\n");
           }
           m_iTurnSpeed = 0;
         }
@@ -556,6 +567,7 @@ public:
 
           case e_ContactLeft:
             m_MovingState = e_TurnRight;
+            uart_puts("ContactLeft -> TurnLeft > TurnRight\r\n");
             continue;
           }
         }
@@ -563,13 +575,14 @@ public:
         {
           if (m_iForwardSpeed != 0)
           {
-            //TODO: fehler!
+            uart_puts("ERROR: TurnLeft & ForwardSpeed!=0\r\n");
           }
           m_iTurnSpeed = -5;
 
           m_iTurnCount--;
           if (m_iTurnCount <= 0)
           {
+            uart_puts("TurnCount -> Turn > MovingFast\r\n");
             m_MovingState = e_MovingFast;
           }
         }
@@ -587,6 +600,7 @@ public:
             break;
 
           case e_ContactRight:
+            uart_puts("ContactRight -> TurnRight > TurnLeft\r\n");
             m_MovingState = e_TurnLeft;
             continue;
           }
@@ -595,13 +609,14 @@ public:
         {
           if (m_iForwardSpeed != 0)
           {
-            //TODO:
+            uart_puts("ERROR: TurnRight & ForwardSpeed!=0\r\n");
           }
           m_iTurnSpeed = 5;
 
           m_iTurnCount--;
           if (m_iTurnCount <= 0)
           {
+            uart_puts("TurnCount -> Turn > MovingFast\r\n");
             m_MovingState = e_MovingFast;
           }
 
@@ -612,7 +627,7 @@ public:
       m_Motor.Send(e_Speed, m_iForwardSpeed);
       m_Motor.Send(e_Turn, m_iTurnSpeed);
 
-      _delay_ms (30);
+      _delay_ms (25);
 
     }
   }
@@ -647,40 +662,11 @@ private:
 
 int main()
 {
+  uart_init();
 
-	  UBRRH = UBRR_VAL >> 8;
-	  UBRRL = UBRR_VAL & 0xFF;
+  uart_puts("Boot...\r\n");
+  Mower mower;
 
-	  UCSRB |= (1<<TXEN);
-	  UCSRC = (1<<URSEL)|(1<<UCSZ1)|(1<<UCSZ0);
-
-	    uart_puts("Boot...\r\n");
-
-	      Mower mower;
-	      mower.run();
-//	  Motor m;
-//
-//		for(int i = 0; i < 100; i++)
-//		{
-//			m.Send (e_Speed, i);
-//			_delay_ms(20);
-//		}
-//	  for(;;)
-//	  {
-//			m.Send (e_Speed, 100);
-//			_delay_ms(20);
-//			continue;
-//			for(int i = -100; i < 100; i++)
-//			{
-//				m.Send (e_Speed, i);
-//				_delay_ms(20);
-//			}
-//			_delay_ms(1000);
-//			for(int i = 100; i > -100; i--)
-//			{
-//				m.Send (e_Speed, i);
-//				_delay_ms(20);
-//			}
-//			_delay_ms(1000);
-//	  }
+  uart_puts("Running...\r\n");
+  mower.run();
 }
