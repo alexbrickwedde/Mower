@@ -3,6 +3,17 @@
 #include <avr/io.h>
 #include <util/delay.h>
 #include <inttypes.h>
+#include <stdlib.h>
+
+
+#define d_BackCount           80
+#define d_TurnCount           45
+#define d_FastForwardSpeed    70
+#define d_SlowForwardSpeed    30
+#define d_BackwardSpeed       -30
+#define d_BackwardTurnSpeed   15
+#define d_TurnSpeed           25
+
 
 #define BAUD 115200UL
 #define UBRR_VAL ((F_CPU+BAUD*8)/(BAUD*16)-1)
@@ -282,6 +293,7 @@ public:
     , m_iForwardSpeed (0)
     , m_iTurnSpeed (0)
     , m_iTurnCount (0)
+    , m_iBackMinCount (0)
   {
     uart_puts("Init Mower...\r\n");
 	  PORTB |= 0x1;
@@ -294,109 +306,66 @@ public:
     for (;;)
     {
       //TODO:  Werte auslesen
-      bool bContactLeft = false;//((PINC & 1) == 0);
-      bool bContactRight = false;//((PINC & 2) == 0);
-      bool bDistanceLeft = false;//((PINC & 4) == 0);
-      bool bDistanceRight = false;//((PINC & 8) == 0);
+      bool bContactLeft = ((PINC & 1) == 1);
+      bool bContactRight = ((PINC & 4) == 4);
+      bool bDistanceLeft = ((PINC & 2) == 2);
+      bool bDistanceRight = ((PINC & 8) == 8);
       bool bStartKey = ((PINB & 1) == 0);
 
       signed char iFeedbackSpeed = m_Motor.Read(e_Speed);
 
-      unsigned char uiBatteryVoltage = m_Motor.Read(e_Battery);
-      if (uiBatteryVoltage < 110)
-      {
-        m_MovingState = e_Idle;
-      }
+//      unsigned char uiBatteryVoltage = m_Motor.Read(e_Battery);
+//      if (uiBatteryVoltage < 110)
+//      {
+//        m_MovingState = e_Idle;
+//      }
 
+      TSensorState NewSensorState;
       bool bTransition = false;
-      switch (m_SensorState)
+      if (bContactLeft)
       {
-      case e_Normal:
-        if (bContactLeft)
-        {
-          m_SensorState = e_ContactLeft;
-          bTransition = true;
-        }
-        else if (bContactRight)
-        {
-          m_SensorState = e_ContactRight;
-          bTransition = true;
-        }
-        else if (bDistanceRight)
-        {
-          m_SensorState = e_DistanceRight;
-          bTransition = true;
-        }
-        else if (bDistanceLeft)
-        {
-          m_SensorState = e_DistanceLeft;
-          bTransition = true;
-        }
-        break;
-
-      case e_DistanceLeft:
-      case e_DistanceRight:
-        if (bContactLeft)
-        {
-          m_SensorState = e_ContactLeft;
-          bTransition = true;
-        }
-        else if (bContactRight)
-        {
-          m_SensorState = e_ContactRight;
-          bTransition = true;
-        }
-        else if (bDistanceRight)
-        {
-        }
-        else if (bDistanceLeft)
-        {
-        }
-        else
-        {
-          m_SensorState = e_Normal;
-          bTransition = true;
-        }
-        break;
-
-      case e_ContactLeft:
-      case e_ContactRight:
-          if (bContactLeft)
-          {
-          }
-          else if (bContactRight)
-          {
-          }
-          else
-          {
-            m_SensorState = e_Normal;
-            bTransition = true;
-          }
-        break;
+        NewSensorState = e_ContactLeft;
+      }
+      else if (bContactRight)
+      {
+        NewSensorState = e_ContactRight;
+      }
+      else if (bDistanceRight)
+      {
+        NewSensorState = e_DistanceRight;
+      }
+      else if (bDistanceLeft)
+      {
+        NewSensorState = e_DistanceLeft;
+      }
+      else
+      {
+        NewSensorState = e_Normal;
       }
 
-      if (bTransition)
+      if (NewSensorState != m_SensorState)
       {
-          switch(m_SensorState)
-          {
-          case e_ContactLeft:
-        	  uart_puts("ContactLeft\r\n");
-        	  break;
-          case e_ContactRight:
-        	  uart_puts("ContactRight\r\n");
-        	  break;
-          case e_DistanceLeft:
-        	  uart_puts("DistanceLeft\r\n");
-        	  break;
-          case e_DistanceRight:
-        	  uart_puts("DistanceRight\r\n");
-        	  break;
-          case e_Normal:
-        	  uart_puts("Normal\r\n");
-        	  break;
-          }
+        bTransition = true;
+        m_SensorState = NewSensorState;
+        switch(m_SensorState)
+        {
+        case e_ContactLeft:
+          uart_puts("ContactLeft\r\n");
+          break;
+        case e_ContactRight:
+          uart_puts("ContactRight\r\n");
+          break;
+        case e_DistanceLeft:
+          uart_puts("DistanceLeft\r\n");
+          break;
+        case e_DistanceRight:
+          uart_puts("DistanceRight\r\n");
+          break;
+        case e_Normal:
+          uart_puts("Normal\r\n");
+          break;
+        }
       }
-
 
       if (m_iForwardSpeed > 0)
       {
@@ -430,6 +399,8 @@ public:
           case e_ContactRight:
             uart_puts("StartKey -> BackForTurn\r\n");
             m_MovingState = e_BackForTurn;
+            m_iTurnCount = d_TurnCount;
+            m_iBackMinCount = d_BackCount;
             break;
           }
         }
@@ -453,20 +424,28 @@ public:
           case e_DistanceRight:
             uart_puts("Distance -> MovingFast > MovingSlow\r\n");
             m_MovingState = e_MovingSlow;
-            m_iForwardSpeed = 20;
+            m_iForwardSpeed = d_SlowForwardSpeed;
             m_iTurnSpeed = 0;
             continue;
 
           case e_ContactLeft:
-            uart_puts("ContactLeft -> MovingFast > MovingSlow\r\n");
+            uart_puts("ContactLeft -> MovingFast > BackForTurn\r\n");
             m_AfterBackwardsMovingState = e_TurnRight;
             m_MovingState = e_BackForTurn;
+            m_iTurnCount = d_TurnCount;
+            m_iBackMinCount = d_BackCount;
+            m_iForwardSpeed = d_BackwardSpeed;
+            m_iTurnSpeed = -1 * d_BackwardTurnSpeed;
             continue;
 
           case e_ContactRight:
-            uart_puts("ContactRight -> MovingFast > MovingSlow\r\n");
+            uart_puts("ContactRight -> MovingFast > BackForTurn\r\n");
             m_AfterBackwardsMovingState = e_TurnLeft;
             m_MovingState = e_BackForTurn;
+            m_iTurnCount = d_TurnCount;
+            m_iBackMinCount = d_BackCount;
+            m_iForwardSpeed = d_BackwardSpeed;
+            m_iTurnSpeed = d_BackwardTurnSpeed;
             continue;
           }
         }
@@ -483,9 +462,9 @@ public:
             }
           }
 
-          if (m_iForwardSpeed != 100)
+          if (m_iForwardSpeed != d_FastForwardSpeed)
           {
-            m_iForwardSpeed += (m_iForwardSpeed < 100) ? 1 : -1;
+            m_iForwardSpeed += (m_iForwardSpeed < d_FastForwardSpeed) ? 1 : -1;
             //uart_puts("ForwardSpeed -> corrected\r\n");
           }
           m_iTurnSpeed = 0;
@@ -510,23 +489,32 @@ public:
           case e_ContactRight:
             uart_puts("Contact -> MovingSlow > BackForTurn\r\n");
             m_MovingState = e_BackForTurn;
-            m_iTurnCount = 20;
-            m_iForwardSpeed = -20;
+            m_iTurnCount = d_TurnCount;
+            m_iBackMinCount = d_BackCount;
+            m_iForwardSpeed = d_BackwardSpeed;
             m_iTurnSpeed = 0;
             continue;
           }
         }
         else
         {
-          if (m_iForwardSpeed != 20)
+          if (m_iForwardSpeed != d_SlowForwardSpeed)
           {
-            uart_puts("ERROR: MovingSlow & ForwardSpeed!=20\r\n");
+            uart_puts("ERROR: MovingSlow & ForwardSpeed!=SlowForwardSpeed\r\n");
           }
         }
         break;
 
       case e_BackForTurn:
-        if (bTransition)
+        if (m_iBackMinCount > 0)
+        {
+          m_iBackMinCount--;
+          if (m_iBackMinCount == 0)
+          {
+            uart_puts("m_iBackMinCount == 0\r\n");
+          }
+        }
+        else
         {
           switch (m_SensorState)
           {
@@ -544,82 +532,65 @@ public:
             break;
           }
         }
-        else
-        {
-          if (m_iForwardSpeed != -20)
-          {
-            uart_puts("ERROR: BackForTurn & ForwardSpeed!=-20\r\n");
-          }
-          m_iTurnSpeed = 0;
-        }
         break;
 
       case e_TurnLeft:
-        if (bTransition)
-        {
-          switch (m_SensorState)
-          {
-          case e_Normal:
-          case e_DistanceLeft:
-          case e_DistanceRight:
-          case e_ContactRight:
-            break;
 
-          case e_ContactLeft:
-            m_MovingState = e_TurnRight;
-            uart_puts("ContactLeft -> TurnLeft > TurnRight\r\n");
-            continue;
-          }
+        if (m_iForwardSpeed != 0)
+        {
+          uart_puts("ERROR: TurnLeft & ForwardSpeed!=0\r\n");
         }
-        else
-        {
-          if (m_iForwardSpeed != 0)
-          {
-            uart_puts("ERROR: TurnLeft & ForwardSpeed!=0\r\n");
-          }
-          m_iTurnSpeed = -5;
+        m_iTurnSpeed = -1 * d_TurnSpeed;
 
+        switch (m_SensorState)
+        {
+        case e_Normal:
+        case e_DistanceLeft:
+        case e_DistanceRight:
           m_iTurnCount--;
           if (m_iTurnCount <= 0)
           {
             uart_puts("TurnCount -> Turn > MovingFast\r\n");
             m_MovingState = e_MovingFast;
           }
+          break;
+
+        case e_ContactRight:
+          m_MovingState = e_TurnLeft;
+          uart_puts("ContactLeft -> TurnRight > TurnLeft\r\n");
+          continue;
+        case e_ContactLeft:
+          m_MovingState = e_TurnRight;
+          uart_puts("ContactLeft -> TurnLeft > TurnRight\r\n");
+          continue;
         }
         break;
 
       case e_TurnRight:
-        if (bTransition)
+        if (m_iForwardSpeed != 0)
         {
-          switch (m_SensorState)
-          {
-          case e_Normal:
-          case e_DistanceLeft:
-          case e_DistanceRight:
-          case e_ContactLeft:
-            break;
-
-          case e_ContactRight:
-            uart_puts("ContactRight -> TurnRight > TurnLeft\r\n");
-            m_MovingState = e_TurnLeft;
-            continue;
-          }
+          uart_puts("ERROR: TurnRight & ForwardSpeed!=0\r\n");
         }
-        else
-        {
-          if (m_iForwardSpeed != 0)
-          {
-            uart_puts("ERROR: TurnRight & ForwardSpeed!=0\r\n");
-          }
-          m_iTurnSpeed = 5;
+        m_iTurnSpeed = d_TurnSpeed;
 
+        switch (m_SensorState)
+        {
+        case e_Normal:
+        case e_DistanceLeft:
+        case e_DistanceRight:
+        case e_ContactLeft:
           m_iTurnCount--;
           if (m_iTurnCount <= 0)
           {
             uart_puts("TurnCount -> Turn > MovingFast\r\n");
             m_MovingState = e_MovingFast;
           }
+          break;
 
+        case e_ContactRight:
+          uart_puts("ContactRight -> TurnRight > TurnLeft\r\n");
+          m_MovingState = e_TurnLeft;
+          continue;
         }
         break;
       }
@@ -640,7 +611,7 @@ private:
     e_ContactRight,
     e_DistanceLeft,
     e_DistanceRight
-  } m_SensorState;
+  };
 
   enum TMovingState {
     e_Idle = 0,
@@ -649,13 +620,16 @@ private:
     e_BackForTurn,
     e_TurnLeft,
     e_TurnRight
-  } m_MovingState;
+  } ;
 
+  TSensorState m_SensorState;
+  TMovingState m_MovingState;
   TMovingState m_AfterBackwardsMovingState;
 
   signed char m_iForwardSpeed;
   signed char m_iTurnSpeed;
-  signed char m_iTurnCount;
+  signed long m_iTurnCount;
+  signed long m_iBackMinCount;
 
   Motor m_Motor;
 };
