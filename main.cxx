@@ -51,6 +51,13 @@ void uart_puti (const unsigned int uiV)
   uart_puts(s);
 }
 
+void uart_putl (const unsigned long ulV)
+{
+  char s[17];
+  ltoa(ulV, s, 10);
+  uart_puts(s);
+}
+
 /*************************************************************************
 * Title:    I2C master library using hardware TWI interface
 * Author:   Peter Fleury <pfleury@gmx.ch>  http://jump.to/fleury
@@ -252,11 +259,11 @@ unsigned int ADC2Distance(unsigned char cV)
   }
   else if (uiRes < 160)
   {
-    return (8 + ((uiRes - 160) / 10));
+    return (8 - ((uiRes - 160) / 10));
   }
   else
   {
-    return (4 + ((uiRes - 255) / 24));
+    return (4 - ((uiRes - 255) / 24));
   }
 }
 
@@ -285,6 +292,14 @@ enum TMotorCmd
 {
   e_Speed = 0,
   e_Turn = 1,
+  e_Enc1a = 2,
+  e_Enc1b = 3,
+  e_Enc1c = 4,
+  e_Enc1d = 5,
+  e_Enc2a = 6,
+  e_Enc2b = 7,
+  e_Enc2c = 8,
+  e_Enc2d = 9,
   e_Battery = 10,
   e_Current1 = 11,
   e_Current2 = 12,
@@ -349,6 +364,11 @@ public:
 
   void run()
   {
+    bool bDistanceLeft = false;
+    bool bDistanceRight = false;
+    unsigned long lOldEnc1 = 0;
+    unsigned long lOldEnc2 = 0;
+    unsigned int m_uiFeedbackErrorCount = 0;
     for (;;)
     {
       //TODO:  Werte auslesen
@@ -357,25 +377,54 @@ public:
 
       unsigned int uiDistance1 = Distance1();
       unsigned int uiDistance2 = Distance2();
-      bool bDistanceLeft = uiDistance1 < 20;
-      bool bDistanceRight = uiDistance2 < 20;
+      if (uiDistance1 > 30)
+      {
+        bDistanceLeft = false;
+      }
+      else if (uiDistance1 < 20)
+      {
+        bDistanceLeft = true;
+      }
+      if (uiDistance2 > 30)
+      {
+        bDistanceRight = false;
+      }
+      else if (uiDistance2 < 20)
+      {
+        bDistanceRight = true;
+      }
 
-      uart_puts ("Distance1:");
-      uart_puti (uiDistance1);
-      uart_puts ("\r\n");
-      uart_puts ("Distance2:             ");
-      uart_puti (uiDistance2);
-      uart_puts ("\r\n");
+//      uart_puts ("Distance1:");
+//      uart_puti (uiDistance1);
+//      uart_puts ("\r\n");
+//      uart_puts ("Distance2:             ");
+//      uart_puti (uiDistance2);
+//      uart_puts ("\r\n");
 
       bool bStartKey = ((PINB & 1) == 0);
 
-      signed char iFeedbackSpeed = m_Motor.Read(e_Speed);
+      //signed char iFeedbackSpeed = m_Motor.Read(e_Speed);
 
-//      unsigned char uiBatteryVoltage = m_Motor.Read(e_Battery);
-//      if (uiBatteryVoltage < 110)
-//      {
-//        m_MovingState = e_Idle;
-//      }
+      unsigned long lEnc1 = ((unsigned long)m_Motor.Read(e_Enc1a)) << 24;
+      lEnc1 |= ((unsigned long)m_Motor.Read(e_Enc1b)) << 16;
+      lEnc1 |= ((unsigned long)m_Motor.Read(e_Enc1c)) << 8;
+      lEnc1 |= ((unsigned long)m_Motor.Read(e_Enc1d));
+      long lFeedbackSpeed1 = (lEnc1 - lOldEnc1) * 4;
+      lOldEnc1 = lEnc1;
+
+      unsigned long lEnc2 = ((unsigned long)m_Motor.Read(e_Enc2a)) << 24;
+      lEnc2 |= ((unsigned long)m_Motor.Read(e_Enc2b)) << 16;
+      lEnc2 |= ((unsigned long)m_Motor.Read(e_Enc2c)) << 8;
+      lEnc2 |= ((unsigned long)m_Motor.Read(e_Enc2d));
+      long lFeedbackSpeed2 = (lEnc2 - lOldEnc2) * 4;
+      lOldEnc2 = lEnc2;
+
+      unsigned char uiBatteryVoltage = m_Motor.Read(e_Battery);
+      if (uiBatteryVoltage < 100)
+      {
+        uart_puts("Battery empty\r\n");
+        m_MovingState = e_Idle;
+      }
 
       TSensorState NewSensorState;
       bool bTransition = false;
@@ -426,10 +475,27 @@ public:
 
       if (m_iForwardSpeed > 0)
       {
-        int iActualMin = m_iForwardSpeed - 10;
-        if (iFeedbackSpeed < iActualMin)
+        signed int iActualMin = m_iForwardSpeed - 10;
+        if (lFeedbackSpeed1 < iActualMin)
         {
+          uart_puts("m_uiFeedbackErrorCount++ (left)\r\n");
+          m_uiFeedbackErrorCount++;
+        }
+        else if (lFeedbackSpeed2 < iActualMin)
+        {
+          uart_puts("m_uiFeedbackErrorCount++ (right)\r\n");
+          m_uiFeedbackErrorCount++;
+        }
+        else
+        {
+          m_uiFeedbackErrorCount = 0;
+        }
+        if (m_uiFeedbackErrorCount > 10)
+        {
+          uart_puts("m_uiFeedbackErrorCount > 10\r\n");
           m_MovingState = e_Idle;
+          m_iForwardSpeed = 0;
+          m_iTurnSpeed = 0;
           continue;
         }
       }
@@ -508,16 +574,16 @@ public:
         }
         else
         {
-          if (m_iForwardSpeed > 0)
-          {
-            int iActualMax = m_iForwardSpeed + 10;
-            if (iFeedbackSpeed > iActualMax)
-            {
-              uart_puts("SpeedTooLow -> Idle\r\n");
-              m_MovingState = e_Idle;
-              continue;
-            }
-          }
+//          if (m_iForwardSpeed > 0)
+//          {
+//            int iActualMax = m_iForwardSpeed + 10;
+//            if (iFeedbackSpeed > iActualMax)
+//            {
+//              uart_puts("SpeedTooLow -> Idle\r\n");
+//              m_MovingState = e_Idle;
+//              continue;
+//            }
+//          }
 
           if (m_iForwardSpeed != d_FastForwardSpeed)
           {
