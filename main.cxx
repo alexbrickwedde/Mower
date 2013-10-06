@@ -44,6 +44,13 @@ void uart_puts (const char *s)
   }
 }
 
+void uart_puti (const unsigned int uiV)
+{
+  char s[7];
+  itoa(uiV, s, 10);
+  uart_puts(s);
+}
+
 /*************************************************************************
 * Title:    I2C master library using hardware TWI interface
 * Author:   Peter Fleury <pfleury@gmx.ch>  http://jump.to/fleury
@@ -235,6 +242,45 @@ unsigned char i2c_readNak(void)
 
 }/* i2c_readNak */
 
+
+unsigned int ADC2Distance(unsigned char cV)
+{
+  long uiRes = cV;
+  if (uiRes < 80)
+  {
+    return (16 - (((uiRes - 80))));
+  }
+  else if (uiRes < 160)
+  {
+    return (8 + ((uiRes - 160) / 10));
+  }
+  else
+  {
+    return (4 + ((uiRes - 255) / 24));
+  }
+}
+
+unsigned int Distance1()
+{
+  ADMUX = (1<<REFS1) | (1<<REFS0) | (1<<MUX0) | (1<<ADLAR);
+  ADCSRA = (1<<ADEN) | (1<<ADPS2) | (1<<ADPS1);
+  while ( (ADCSRA & (1<<ADSC)) != 0);
+  ADCSRA |= (1<<ADSC);
+  while ( (ADCSRA & (1<<ADSC)) != 0);
+  unsigned char cV = ADCH;
+  return (ADC2Distance(cV));
+}
+
+unsigned int Distance2()
+{
+  ADMUX = (1<<REFS1) | (1<<REFS0) | (1<<MUX1) | (1<<MUX0) | (1<<ADLAR);
+  ADCSRA = (1<<ADEN) | (1<<ADPS2) | (1<<ADPS1);
+  while ( (ADCSRA & (1<<ADSC)) != 0);
+  ADCSRA |= (1<<ADSC);
+  while ( (ADCSRA & (1<<ADSC)) != 0);
+  return (ADC2Distance(ADCH));
+}
+
 enum TMotorCmd
 {
   e_Speed = 0,
@@ -308,8 +354,19 @@ public:
       //TODO:  Werte auslesen
       bool bContactLeft = ((PINC & 1) == 1);
       bool bContactRight = ((PINC & 4) == 4);
-      bool bDistanceLeft = ((PINC & 2) == 2);
-      bool bDistanceRight = ((PINC & 8) == 8);
+
+      unsigned int uiDistance1 = Distance1();
+      unsigned int uiDistance2 = Distance2();
+      bool bDistanceLeft = uiDistance1 < 20;
+      bool bDistanceRight = uiDistance2 < 20;
+
+      uart_puts ("Distance1:");
+      uart_puti (uiDistance1);
+      uart_puts ("\r\n");
+      uart_puts ("Distance2:             ");
+      uart_puti (uiDistance2);
+      uart_puts ("\r\n");
+
       bool bStartKey = ((PINB & 1) == 0);
 
       signed char iFeedbackSpeed = m_Motor.Read(e_Speed);
