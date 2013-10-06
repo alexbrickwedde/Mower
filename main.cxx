@@ -8,9 +8,11 @@
 
 #define d_BackCount           80
 #define d_TurnCount           45
-#define d_FastForwardSpeed    70
+
+#define d_FastForwardSpeed    80
 #define d_SlowForwardSpeed    30
 #define d_BackwardSpeed       -30
+
 #define d_BackwardTurnSpeed   15
 #define d_TurnSpeed           25
 
@@ -44,14 +46,28 @@ void uart_puts (const char *s)
   }
 }
 
-void uart_puti (const unsigned int uiV)
+void uart_puti (const signed int uiV)
 {
   char s[7];
   itoa(uiV, s, 10);
   uart_puts(s);
 }
 
-void uart_putl (const unsigned long ulV)
+void uart_putl (const signed long ulV)
+{
+  char s[17];
+  ltoa(ulV, s, 10);
+  uart_puts(s);
+}
+
+void uart_putui (const unsigned int uiV)
+{
+  char s[7];
+  itoa(uiV, s, 10);
+  uart_puts(s);
+}
+
+void uart_putul (const unsigned long ulV)
 {
   char s[17];
   ltoa(ulV, s, 10);
@@ -312,9 +328,9 @@ class Motor
 public:
   Motor()
   {
-    uart_puts("Init Motor...\r\n");
+    uart_puts("Init Motor...");
     uart_putc('1');
-    i2c_init();                             // initialize I2C library
+    i2c_init();
 
     uart_putc('2');
     Send (e_Speed, 0);
@@ -368,10 +384,11 @@ public:
     bool bDistanceRight = false;
     unsigned long lOldEnc1 = 0;
     unsigned long lOldEnc2 = 0;
+    unsigned long lCycleCount = 0;
     unsigned int m_uiFeedbackErrorCount = 0;
+
     for (;;)
     {
-      //TODO:  Werte auslesen
       bool bContactLeft = ((PINC & 1) == 1);
       bool bContactRight = ((PINC & 4) == 4);
 
@@ -394,16 +411,7 @@ public:
         bDistanceRight = true;
       }
 
-//      uart_puts ("Distance1:");
-//      uart_puti (uiDistance1);
-//      uart_puts ("\r\n");
-//      uart_puts ("Distance2:             ");
-//      uart_puti (uiDistance2);
-//      uart_puts ("\r\n");
-
       bool bStartKey = ((PINB & 1) == 0);
-
-      //signed char iFeedbackSpeed = m_Motor.Read(e_Speed);
 
       unsigned long lEnc1 = ((unsigned long)m_Motor.Read(e_Enc1a)) << 24;
       lEnc1 |= ((unsigned long)m_Motor.Read(e_Enc1b)) << 16;
@@ -422,8 +430,33 @@ public:
       unsigned char uiBatteryVoltage = m_Motor.Read(e_Battery);
       if (uiBatteryVoltage < 100)
       {
-        uart_puts("Battery empty\r\n");
+        uart_puts("Battery:");
+        uart_putui(uiBatteryVoltage * 100);
+        uart_puts("mV\r\n");
+        uart_puts("Battery empty!\r\n");
         m_MovingState = e_Idle;
+        m_iForwardSpeed = 0;
+        m_iTurnSpeed = 0;
+        continue;
+      }
+
+      if ((lCycleCount >> 2) % 100)
+      {
+        uart_puts("ForwardSpeed:");
+        uart_puti(m_iForwardSpeed);
+        uart_puts("\r\n");
+
+        uart_puts("FeedbackSpeed1:");
+        uart_putl(lFeedbackSpeed1);
+        uart_puts("\r\n");
+
+        uart_puts("FeedbackSpeed2:");
+        uart_putl(lFeedbackSpeed2);
+        uart_puts("\r\n");
+
+        uart_puts("Battery:");
+        uart_putui(uiBatteryVoltage * 100);
+        uart_puts("mV\r\n");
       }
 
       TSensorState NewSensorState;
@@ -456,19 +489,19 @@ public:
         switch(m_SensorState)
         {
         case e_ContactLeft:
-          uart_puts("ContactLeft\r\n");
+          uart_puts("Sensor: ContactLeft\r\n");
           break;
         case e_ContactRight:
-          uart_puts("ContactRight\r\n");
+          uart_puts("Sensor: ContactRight\r\n");
           break;
         case e_DistanceLeft:
-          uart_puts("DistanceLeft\r\n");
+          uart_puts("Sensor: DistanceLeft\r\n");
           break;
         case e_DistanceRight:
-          uart_puts("DistanceRight\r\n");
+          uart_puts("Sensor: DistanceRight\r\n");
           break;
         case e_Normal:
-          uart_puts("Normal\r\n");
+          uart_puts("Sensor: Normal\r\n");
           break;
         }
       }
@@ -723,6 +756,7 @@ public:
 
       _delay_ms (25);
 
+      lCycleCount++;
     }
   }
 
@@ -760,8 +794,8 @@ private:
 int main()
 {
   uart_init();
-
   uart_puts("Boot...\r\n");
+
   Mower mower;
 
   uart_puts("Running...\r\n");
